@@ -71,7 +71,7 @@ try {
         -Force `
         -ErrorAction Stop | Out-Null
     
-    Write-Host "✓ Task registered successfully" -ForegroundColor Green
+    Write-Host "[OK] Task registered successfully" -ForegroundColor Green
 }
 catch {
     Write-Error "Failed to register task: $_"
@@ -81,7 +81,7 @@ catch {
 # Start the task immediately
 try {
     Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
-    Write-Host "✓ Task started successfully" -ForegroundColor Green
+    Write-Host "[OK] Task started successfully" -ForegroundColor Green
 }
 catch {
     Write-Error "Failed to start task: $_"
@@ -95,4 +95,4 @@ Get-ScheduledTaskInfo -TaskName $taskName | Format-List
 Write-Host "`nTask Details:" -ForegroundColor Cyan
 Get-ScheduledTask -TaskName $taskName | Format-List TaskName, State, @{Name="LastRunTime"; Expression={$_.LastRunTime}}, @{Name="NextRunTime"; Expression={$_.NextRunTime}}
 
-Write-Host "`n✓ Setup complete. The watcher will start at next system boot." -ForegroundColor Green
+Write-Host "`n[OK] Setup complete. The watcher will start at next system boot." -ForegroundColor Green
