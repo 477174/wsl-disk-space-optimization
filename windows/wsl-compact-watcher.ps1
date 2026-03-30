@@ -11,7 +11,7 @@ if ($env:WSL_HEARTBEAT_PORT) {
   }
 }
 
-$GracePeriodSeconds = 30
+$GracePeriodSeconds = 0
 $LogDirectory = Join-Path $PSScriptRoot 'logs'
 $LogFile = Join-Path $LogDirectory 'wsl-watcher.log'
 
