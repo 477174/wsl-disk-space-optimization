@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Docker image and container prune
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/bash -c '[ -z "$(docker ps --filter status=created -q)" ] || (echo "Build in progress, skipping prune" && exit 1)'
+ExecStart=/usr/bin/docker system prune -af

@@ -1,0 +1,13 @@
+[Unit]
+Description=Docker Event-Driven Garbage Collector
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=__INSTALL_DIR__/scripts/docker-gc-daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
