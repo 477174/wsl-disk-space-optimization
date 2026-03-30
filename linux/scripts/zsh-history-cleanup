@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Zsh History Cleanup Script
+# Removes history entries older than specified days (default: 7 days)
+
+DAYS_TO_KEEP=${1:-7}
+HISTORY_FILE="$HOME/.zsh_history"
+BACKUP_DIR="$HOME/.zsh_history_backups"
+
+# Create backup directory if it doesn't exist
+mkdir -p "$BACKUP_DIR"
+
+# Create backup with timestamp
+BACKUP_FILE="$BACKUP_DIR/zsh_history_backup_$(date +%Y%m%d_%H%M%S)"
+cp "$HISTORY_FILE" "$BACKUP_FILE"
+echo "Created backup: $BACKUP_FILE"
+
+# Calculate cutoff timestamp
+CUTOFF_DATE=$(date -d "$DAYS_TO_KEEP days ago" '+%s')
+TEMP_FILE=$(mktemp)
+CLEANED_COUNT=0
+TOTAL_COUNT=0
+
+echo "Cleaning history entries older than $DAYS_TO_KEEP days..."
+
+# Store regex in variable to avoid bash parsing semicolon as command separator
+HIST_RE='^:[[:space:]]*([0-9]+):[0-9]+;.*$'
+
+# Process history file
+while IFS= read -r line; do
+    ((TOTAL_COUNT++))
+    
+    # Check if line has timestamp format: : <timestamp>:<duration>;<command>
+    if [[ $line =~ $HIST_RE ]]; then
+        TIMESTAMP=${BASH_REMATCH[1]}
+        if (( TIMESTAMP > CUTOFF_DATE )); then
+            echo "$line" >> "$TEMP_FILE"
+        else
+            ((CLEANED_COUNT++))
+        fi
+    else
+        # Keep lines that don't match timestamp format (shouldn't happen in zsh history)
+        echo "$line" >> "$TEMP_FILE"
+    fi
+done < "$HISTORY_FILE"
+
+# Replace original file with cleaned version
+mv "$TEMP_FILE" "$HISTORY_FILE"
+
+echo "Cleanup completed:"
+echo "  Total entries processed: $TOTAL_COUNT"
+echo "  Entries removed: $CLEANED_COUNT"
+echo "  Entries kept: $((TOTAL_COUNT - CLEANED_COUNT))"
+
+# Clean old backups (keep last 5)
+cd "$BACKUP_DIR"
+ls -t zsh_history_backup_* 2>/dev/null | tail -n +6 | xargs rm -f
+echo "Cleaned old backups (kept last 5)"

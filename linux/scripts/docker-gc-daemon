@@ -1,0 +1,38 @@
+#!/bin/bash
+# Docker Event-Driven Garbage Collector
+# Listens to Docker events and prunes on every relevant event.
+# Triggered by: container stop/destroy only
+# NOT interval-based — pure event-driven.
+
+COOLDOWN=60  # seconds between prunes (avoid rapid-fire during docker-compose up/down)
+
+last_prune=0
+
+prune() {
+  now=$(date +%s)
+  elapsed=$(( now - last_prune ))
+  if [ "$elapsed" -lt "$COOLDOWN" ]; then
+    return
+  fi
+
+  echo "[$(date -Iseconds)] Pruning unused images..."
+  docker image prune -a -f 2>&1
+  last_prune=$(date +%s)
+  echo "[$(date -Iseconds)] Prune complete."
+}
+
+echo "[$(date -Iseconds)] Docker GC daemon started."
+
+# Prune on startup
+prune
+
+# Listen to Docker events and prune on activity
+docker events \
+  --filter 'type=container' \
+  --filter 'event=die' \
+  --filter 'event=destroy' \
+  --format '{{.Type}} {{.Action}}' 2>/dev/null | \
+while read -r event_line; do
+  echo "[$(date -Iseconds)] Event: $event_line"
+  prune
+done
