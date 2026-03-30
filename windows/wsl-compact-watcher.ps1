@@ -47,25 +47,31 @@ function Get-VhdxPaths {
   }
 
   $paths = @()
-  $packageRoot = Join-Path $env:LOCALAPPDATA 'Packages'
-  if (Test-Path $packageRoot) {
-    $packages = Get-ChildItem -Path $packageRoot -Directory -ErrorAction SilentlyContinue
-    foreach ($pkg in $packages) {
-      $candidate = Join-Path $pkg.FullName 'LocalState\ext4.vhdx'
-      if (Test-Path $candidate) {
-        $paths += $candidate
+  $userDirs = Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
+
+  foreach ($userDir in $userDirs) {
+    $localAppData = Join-Path $userDir.FullName 'AppData\Local'
+
+    $packageRoot = Join-Path $localAppData 'Packages'
+    if (Test-Path $packageRoot) {
+      $packages = Get-ChildItem -Path $packageRoot -Directory -ErrorAction SilentlyContinue
+      foreach ($pkg in $packages) {
+        $candidate = Join-Path $pkg.FullName 'LocalState\ext4.vhdx'
+        if (Test-Path $candidate) {
+          $paths += $candidate
+        }
       }
     }
-  }
 
-  $dockerDataVhdx = Join-Path $env:LOCALAPPDATA 'Docker\wsl\data\ext4.vhdx'
-  if (Test-Path $dockerDataVhdx) {
-    $paths += $dockerDataVhdx
-  }
+    $dockerDataVhdx = Join-Path $localAppData 'Docker\wsl\data\ext4.vhdx'
+    if (Test-Path $dockerDataVhdx) {
+      $paths += $dockerDataVhdx
+    }
 
-  $dockerDistroVhdx = Join-Path $env:LOCALAPPDATA 'Docker\wsl\distro\ext4.vhdx'
-  if (Test-Path $dockerDistroVhdx) {
-    $paths += $dockerDistroVhdx
+    $dockerDistroVhdx = Join-Path $localAppData 'Docker\wsl\distro\ext4.vhdx'
+    if (Test-Path $dockerDistroVhdx) {
+      $paths += $dockerDistroVhdx
+    }
   }
 
   return @($paths | Select-Object -Unique)

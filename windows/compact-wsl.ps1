@@ -27,15 +27,22 @@ if ($vmmem) {
 }
 
 $vhdxPaths = @()
-$packages = Get-ChildItem "$env:LOCALAPPDATA\Packages" -Directory -ErrorAction SilentlyContinue
-foreach ($pkg in $packages) {
-  $vhdx = Join-Path $pkg.FullName "LocalState\ext4.vhdx"
-  if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+$userDirs = Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
+
+foreach ($userDir in $userDirs) {
+  $localAppData = Join-Path $userDir.FullName 'AppData\Local'
+
+  $packages = Get-ChildItem (Join-Path $localAppData 'Packages') -Directory -ErrorAction SilentlyContinue
+  foreach ($pkg in $packages) {
+    $vhdx = Join-Path $pkg.FullName "LocalState\ext4.vhdx"
+    if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+  }
+
+  $dockerVhdx = Join-Path $localAppData 'Docker\wsl\data\ext4.vhdx'
+  if (Test-Path $dockerVhdx) { $vhdxPaths += $dockerVhdx }
+  $dockerDistroVhdx = Join-Path $localAppData 'Docker\wsl\distro\ext4.vhdx'
+  if (Test-Path $dockerDistroVhdx) { $vhdxPaths += $dockerDistroVhdx }
 }
-$dockerVhdx = "$env:LOCALAPPDATA\Docker\wsl\data\ext4.vhdx"
-if (Test-Path $dockerVhdx) { $vhdxPaths += $dockerVhdx }
-$dockerDistroVhdx = "$env:LOCALAPPDATA\Docker\wsl\distro\ext4.vhdx"
-if (Test-Path $dockerDistroVhdx) { $vhdxPaths += $dockerDistroVhdx }
 
 if ($vhdxPaths.Count -eq 0) {
   Log "WARNING: No VHDX files found. Nothing to compact."
