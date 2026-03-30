@@ -1,0 +1,6 @@
+[Unit]
+Description=Weekly zsh history cleanup (older than 7 days)
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_DIR__/scripts/zsh-history-cleanup 7

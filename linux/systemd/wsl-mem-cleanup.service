@@ -1,0 +1,6 @@
+[Unit]
+Description=Free WSL2 memory (drop page cache + KSM cycle)
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_DIR__/scripts/free-wsl-mem.sh

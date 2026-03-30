@@ -1,0 +1,6 @@
+[Unit]
+Description=Weekly dev cache cleanup (uv, pip, npm, browser caches)
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_DIR__/scripts/cache-cleanup.sh
