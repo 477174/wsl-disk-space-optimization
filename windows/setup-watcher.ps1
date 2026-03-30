@@ -1,5 +1,3 @@
-#Requires -RunAsAdministrator
-
 <#
 .SYNOPSIS
     Registers the WSL Disk Optimizer watcher as a Windows Task Scheduler task.
@@ -15,6 +13,14 @@
 .NOTES
     Requires Administrator privileges to register scheduled tasks.
 #>
+
+# Self-elevate if not running as Administrator (triggers UAC prompt)
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Requesting Administrator privileges..." -ForegroundColor Yellow
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs -Wait
+    exit $LASTEXITCODE
+}
 
 # Task configuration
 $taskName = "WSL-Disk-Optimizer"
