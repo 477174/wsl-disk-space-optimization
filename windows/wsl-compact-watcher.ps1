@@ -52,25 +52,25 @@ function Get-VhdxPaths {
   foreach ($userDir in $userDirs) {
     $localAppData = Join-Path $userDir.FullName 'AppData\Local'
 
-    $packageRoot = Join-Path $localAppData 'Packages'
-    if (Test-Path $packageRoot) {
-      $packages = Get-ChildItem -Path $packageRoot -Directory -ErrorAction SilentlyContinue
-      foreach ($pkg in $packages) {
-        $candidate = Join-Path $pkg.FullName 'LocalState\ext4.vhdx'
-        if (Test-Path $candidate) {
-          $paths += $candidate
-        }
+    $wslRoot = Join-Path $localAppData 'wsl'
+    if (Test-Path $wslRoot) {
+      Get-ChildItem -Path $wslRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $candidate = Join-Path $_.FullName 'ext4.vhdx'
+        if (Test-Path $candidate) { $paths += $candidate }
       }
     }
 
-    $dockerDataVhdx = Join-Path $localAppData 'Docker\wsl\data\ext4.vhdx'
-    if (Test-Path $dockerDataVhdx) {
-      $paths += $dockerDataVhdx
+    $packageRoot = Join-Path $localAppData 'Packages'
+    if (Test-Path $packageRoot) {
+      Get-ChildItem -Path $packageRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $candidate = Join-Path $_.FullName 'LocalState\ext4.vhdx'
+        if (Test-Path $candidate) { $paths += $candidate }
+      }
     }
 
-    $dockerDistroVhdx = Join-Path $localAppData 'Docker\wsl\distro\ext4.vhdx'
-    if (Test-Path $dockerDistroVhdx) {
-      $paths += $dockerDistroVhdx
+    foreach ($dockerSub in @('Docker\wsl\data', 'Docker\wsl\distro')) {
+      $candidate = Join-Path $localAppData "$dockerSub\ext4.vhdx"
+      if (Test-Path $candidate) { $paths += $candidate }
     }
   }
 
@@ -93,6 +93,7 @@ function Test-SafeToCompact {
   }
 
   $vhdxPaths = @(Get-VhdxPaths)
+  Write-Log "Found $($vhdxPaths.Count) VHDX file(s): $($vhdxPaths -join ', ')"
   if ($vhdxPaths.Count -eq 0) {
     Write-Log 'Safety check failed: no VHDX paths found.'
     return $false

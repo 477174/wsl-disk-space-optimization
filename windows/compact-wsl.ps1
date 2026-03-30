@@ -1,10 +1,3 @@
-#Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-  Compacts WSL VHDX files to reclaim disk space on Windows.
-.PARAMETER DryRun
-  If set, logs what WOULD happen without executing destructive actions.
-#>
 param([switch]$DryRun)
 
 $LogFile = "$PSScriptRoot\logs\wsl-compact.log"
@@ -32,16 +25,26 @@ $userDirs = Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | 
 foreach ($userDir in $userDirs) {
   $localAppData = Join-Path $userDir.FullName 'AppData\Local'
 
-  $packages = Get-ChildItem (Join-Path $localAppData 'Packages') -Directory -ErrorAction SilentlyContinue
-  foreach ($pkg in $packages) {
-    $vhdx = Join-Path $pkg.FullName "LocalState\ext4.vhdx"
-    if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+  $wslRoot = Join-Path $localAppData 'wsl'
+  if (Test-Path $wslRoot) {
+    Get-ChildItem -Path $wslRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      $vhdx = Join-Path $_.FullName "ext4.vhdx"
+      if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+    }
   }
 
-  $dockerVhdx = Join-Path $localAppData 'Docker\wsl\data\ext4.vhdx'
-  if (Test-Path $dockerVhdx) { $vhdxPaths += $dockerVhdx }
-  $dockerDistroVhdx = Join-Path $localAppData 'Docker\wsl\distro\ext4.vhdx'
-  if (Test-Path $dockerDistroVhdx) { $vhdxPaths += $dockerDistroVhdx }
+  $packagesRoot = Join-Path $localAppData 'Packages'
+  if (Test-Path $packagesRoot) {
+    Get-ChildItem -Path $packagesRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      $vhdx = Join-Path $_.FullName "LocalState\ext4.vhdx"
+      if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+    }
+  }
+
+  foreach ($dockerSub in @('Docker\wsl\data', 'Docker\wsl\distro')) {
+    $vhdx = Join-Path $localAppData "$dockerSub\ext4.vhdx"
+    if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
+  }
 }
 
 if ($vhdxPaths.Count -eq 0) {
@@ -49,15 +52,25 @@ if ($vhdxPaths.Count -eq 0) {
   exit 0
 }
 
+Log "Found $($vhdxPaths.Count) VHDX file(s):"
+foreach ($p in $vhdxPaths) { Log "  $p" }
+
+$hasOptimizeVHD = [bool](Get-Command Optimize-VHD -ErrorAction SilentlyContinue)
+
 foreach ($vhdx in $vhdxPaths) {
   $sizeBefore = (Get-Item $vhdx).Length / 1GB
   Log "Compacting: $vhdx (current size: $([math]::Round($sizeBefore, 2)) GB)"
   if (-not $DryRun) {
-    if (Get-Command Optimize-VHD -ErrorAction SilentlyContinue) {
+    if ($hasOptimizeVHD) {
+      Log "  Using Optimize-VHD"
       Optimize-VHD -Path $vhdx -Mode Full
     } else {
-      $diskpartScript = "select vdisk file=`"$vhdx`"`ncompact vdisk`ndetach vdisk"
-      $diskpartScript | diskpart
+      Log "  Using diskpart"
+      $tmpFile = [System.IO.Path]::GetTempFileName()
+      @("select vdisk file=`"$vhdx`"", "compact vdisk") | Set-Content -Path $tmpFile -Encoding ASCII
+      $output = & diskpart /s $tmpFile 2>&1
+      Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+      $output | ForEach-Object { Log "  diskpart: $_" }
     }
     $sizeAfter = (Get-Item $vhdx).Length / 1GB
     $saved = $sizeBefore - $sizeAfter
