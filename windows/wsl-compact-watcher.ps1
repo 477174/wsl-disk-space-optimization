@@ -11,8 +11,6 @@ if ($env:WSL_HEARTBEAT_PORT) {
   }
 }
 
-$HeartbeatIntervalSeconds = 5
-$HeartbeatTimeoutMilliseconds = 3000
 $GracePeriodSeconds = 30
 $LogDirectory = Join-Path $PSScriptRoot 'logs'
 $LogFile = Join-Path $LogDirectory 'wsl-watcher.log'
@@ -38,34 +36,8 @@ function Set-TcpKeepAlive {
   $Socket.IOControl([System.Net.Sockets.IOControlCode]::KeepAliveValues, $keepAlive, $null) | Out-Null
 }
 
-function Get-RunningWslDistros {
-  try {
-    $output = & wsl --list --running 2>&1
-    if (-not $output) {
-      return @()
-    }
-
-    $lines = @($output | ForEach-Object { $_.ToString().Trim() })
-    if ($lines -match 'There are no running distributions') {
-      return @()
-    }
-
-    return @(
-      $lines | Where-Object {
-        $_ -and
-        $_ -notmatch '^Windows Subsystem for Linux' -and
-        $_ -notmatch '^The following is a list of running distributions' -and
-        $_ -notmatch '^NAME\s+STATE\s+VERSION$'
-      } | ForEach-Object { $_.TrimStart('*').Trim() }
-    )
-  } catch {
-    Write-Log "ERROR: Failed to query running WSL distros: $($_.Exception.Message)"
-    return @()
-  }
-}
-
-function Test-WslRunning {
-  return (Get-RunningWslDistros).Count -gt 0
+function Test-VmmemRunning {
+  return [bool](Get-Process -Name vmmem -ErrorAction SilentlyContinue)
 }
 
 function Get-VhdxPaths {
@@ -108,66 +80,42 @@ function Test-VhdxLocked($path) {
   }
 }
 
-function Test-TripleCheck {
-  $runningDistros = Get-RunningWslDistros
-  if ($runningDistros.Count -gt 0) {
-    Write-Log "Triple-check failed: running distros detected: $($runningDistros -join ', ')"
-    return $false
-  }
-
-  $vmmem = Get-Process -Name vmmem -ErrorAction SilentlyContinue
-  if ($vmmem) {
-    Write-Log 'Triple-check failed: vmmem process is still running.'
+function Test-SafeToCompact {
+  if (Test-VmmemRunning) {
+    Write-Log 'Safety check failed: vmmem process is still running.'
     return $false
   }
 
   $vhdxPaths = Get-VhdxPaths
   if ($vhdxPaths.Count -eq 0) {
-    Write-Log 'Triple-check failed: no VHDX paths found for lock test.'
+    Write-Log 'Safety check failed: no VHDX paths found.'
     return $false
   }
 
   foreach ($vhdx in $vhdxPaths) {
     if (Test-VhdxLocked $vhdx) {
-      Write-Log "Triple-check failed: VHDX is locked: $vhdx"
+      Write-Log "Safety check failed: VHDX is locked: $vhdx"
       return $false
     }
   }
 
-  Write-Log 'Triple-check passed: no running distros, no vmmem, no VHDX locks.'
+  Write-Log 'Safety check passed: no vmmem, no VHDX locks.'
   return $true
 }
 
-function Wait-ForWslShutdown {
-  param([int]$TimeoutSeconds = 60)
+function Wait-ForVmmemExit {
+  param([int]$TimeoutSeconds = 120)
 
   $elapsed = 0
   while ($elapsed -lt $TimeoutSeconds) {
-    $runningDistros = Get-RunningWslDistros
-    $vmmem = Get-Process -Name vmmem -ErrorAction SilentlyContinue
-    if ($runningDistros.Count -eq 0 -and -not $vmmem) {
+    if (-not (Test-VmmemRunning)) {
       return $true
     }
-
     Start-Sleep -Seconds 2
     $elapsed += 2
   }
 
   return $false
-}
-
-function Read-LineWithTimeout {
-  param(
-    [System.IO.StreamReader]$Reader,
-    [int]$TimeoutMilliseconds
-  )
-
-  $task = $Reader.ReadLineAsync()
-  if ($task.Wait($TimeoutMilliseconds)) {
-    return $task.Result
-  }
-
-  return $null
 }
 
 function Invoke-DisconnectSequence {
@@ -181,33 +129,20 @@ function Invoke-DisconnectSequence {
     Start-Sleep -Seconds 5
     $elapsed += 5
 
-    if (Test-WslRunning) {
-      Write-Log 'WSL restarted, cancelling compaction.'
+    if ($listener.Pending()) {
+      Write-Log 'Heartbeat client reconnected during grace period, cancelling compaction.'
       return
     }
   }
 
-  try {
-    Write-Log 'Running fallback fstrim: wsl -u root -e fstrim -av'
-    & wsl -u root -e fstrim -av 2>&1 | ForEach-Object { Write-Log "  fstrim: $_" }
-  } catch {
-    Write-Log "ERROR: fstrim command failed: $($_.Exception.Message)"
-  }
-
-  try {
-    Write-Log 'Running wsl --shutdown'
-    & wsl --shutdown | Out-Null
-  } catch {
-    Write-Log "ERROR: wsl --shutdown failed: $($_.Exception.Message)"
-  }
-
-  if (-not (Wait-ForWslShutdown -TimeoutSeconds 60)) {
-    Write-Log 'ERROR: WSL did not fully shutdown within 60 seconds. Skipping compaction.'
+  Write-Log 'Grace period ended. Waiting for vmmem to exit...'
+  if (-not (Wait-ForVmmemExit -TimeoutSeconds 120)) {
+    Write-Log 'ERROR: vmmem still running after 120s. WSL is still alive. Skipping compaction.'
     return
   }
 
-  if (-not (Test-TripleCheck)) {
-    Write-Log 'ERROR: Triple-check failed. Skipping compaction.'
+  if (-not (Test-SafeToCompact)) {
+    Write-Log 'ERROR: Safety check failed. Skipping compaction.'
     return
   }
 
@@ -230,9 +165,6 @@ try {
   while ($true) {
     $state = 'LISTENING'
     $client = $null
-    $stream = $null
-    $reader = $null
-    $writer = $null
     $disconnectReason = $null
 
     try {
@@ -244,48 +176,21 @@ try {
       $socket = $client.Client
       Set-TcpKeepAlive -Socket $socket
 
-      $stream = $client.GetStream()
-      $reader = [System.IO.StreamReader]::new($stream)
-      $writer = [System.IO.StreamWriter]::new($stream)
-      $writer.NewLine = "`n"
-      $writer.AutoFlush = $true
-
-      $nextHeartbeat = Get-Date
       while ($true) {
-        if ($socket.Poll(1000, [System.Net.Sockets.SelectMode]::SelectRead) -and $socket.Available -eq 0) {
+        if ($socket.Poll(1000000, [System.Net.Sockets.SelectMode]::SelectRead) -and $socket.Available -eq 0) {
           $disconnectReason = 'clean FIN (socket poll/readable + available=0)'
           break
         }
 
-        if ((Get-Date) -ge $nextHeartbeat) {
-          try {
-            $writer.WriteLine('PING')
-          } catch {
-            $disconnectReason = "write failure while sending PING: $($_.Exception.Message)"
-            break
-          }
-
-          $pong = Read-LineWithTimeout -Reader $reader -TimeoutMilliseconds $HeartbeatTimeoutMilliseconds
-          if ([string]::IsNullOrWhiteSpace($pong) -or $pong.Trim() -ne 'PONG') {
-            $disconnectReason = 'heartbeat timeout or invalid heartbeat response'
-            break
-          }
-
-          $nextHeartbeat = (Get-Date).AddSeconds($HeartbeatIntervalSeconds)
-        }
-
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 500
       }
 
       if ($disconnectReason) {
         Invoke-DisconnectSequence -DisconnectReason $disconnectReason
       }
     } catch {
-      Write-Log "ERROR: Main loop exception in state=$state: $($_.Exception.Message)"
+      Write-Log "ERROR: Main loop exception in state=${state}: $($_.Exception.Message)"
     } finally {
-      if ($writer) { $writer.Dispose() }
-      if ($reader) { $reader.Dispose() }
-      if ($stream) { $stream.Dispose() }
       if ($client) { $client.Close(); $client.Dispose() }
       Write-Log 'State=LISTENING returning to listen for the next connection.'
     }

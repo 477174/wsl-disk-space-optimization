@@ -19,34 +19,15 @@ function Log($msg) {
 
 Log "=== WSL VHDX Compaction $(if ($DryRun) { '(DRY RUN)' }) ==="
 
-Log "Running fstrim inside WSL..."
-if (-not $DryRun) {
-  wsl -u root -e fstrim -av 2>&1 | ForEach-Object { Log "  fstrim: $_" }
-} else {
-  Log "  [DRY RUN] Would run: wsl -u root -e fstrim -av"
-}
-
-Log "Shutting down WSL..."
-if (-not $DryRun) {
-  wsl --shutdown
-  Start-Sleep -Seconds 5
-  $maxWait = 30; $waited = 0
-  while ($waited -lt $maxWait) {
-    $running = wsl -l -v 2>&1 | Select-String "Running"
-    if (-not $running) { break }
-    Start-Sleep -Seconds 2; $waited += 2
-  }
-  if ($waited -ge $maxWait) {
-    Log "ERROR: WSL did not shutdown within ${maxWait}s. Aborting."
-    exit 1
-  }
-  Log "WSL shutdown confirmed."
-} else {
-  Log "  [DRY RUN] Would run: wsl --shutdown"
+# Verify WSL is not running (vmmem absent = WSL VM is down)
+$vmmem = Get-Process -Name vmmem -ErrorAction SilentlyContinue
+if ($vmmem) {
+  Log "ERROR: vmmem is running — WSL is still active. Cannot compact while VHDX is in use."
+  exit 1
 }
 
 $vhdxPaths = @()
-$packages = Get-ChildItem "$env:LOCALAPPDATA\Packages" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "Ubuntu|Debian|SUSE|Kali|Fedora|Canonical" }
+$packages = Get-ChildItem "$env:LOCALAPPDATA\Packages" -Directory -ErrorAction SilentlyContinue
 foreach ($pkg in $packages) {
   $vhdx = Join-Path $pkg.FullName "LocalState\ext4.vhdx"
   if (Test-Path $vhdx) { $vhdxPaths += $vhdx }
