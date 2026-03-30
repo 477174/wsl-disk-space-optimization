@@ -155,7 +155,7 @@ if ! uname -r | grep -qi microsoft; then
   exit 1
 fi
 
-if ! systemctl is-system-running >/dev/null 2>&1; then
+if ! systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'; then
   log_err "Enable systemd in /etc/wsl.conf"
   exit 1
 fi
@@ -296,7 +296,7 @@ fi
 if [[ "$install_watcher" == true ]]; then
   systemctl enable --now wsl-heartbeat.service
 
-  WIN_USER="$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r')"
+  WIN_USER="$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r' || true)"
   if [[ -z "$WIN_USER" ]]; then
     log_warn "Could not detect Windows user; watcher Windows setup skipped"
     watcher_status="partial"
@@ -305,7 +305,8 @@ if [[ "$install_watcher" == true ]]; then
     WIN_DIR="/mnt/c/Users/$WIN_USER/wsl-disk-optimizer"
     mkdir -p "$WIN_DIR"
     cp -f "$SCRIPT_DIR"/windows/* "$WIN_DIR/"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_DIR/setup-watcher.ps1"
+    WIN_PS_PATH="$(wslpath -w "$WIN_DIR/setup-watcher.ps1" 2>/dev/null || echo "$WIN_DIR/setup-watcher.ps1" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|; s|/|\\|g')"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS_PATH"
     watcher_status="installed"
     watcher_detail="heartbeat service + Windows scheduled task setup"
   fi
