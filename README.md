@@ -12,36 +12,40 @@ Four pillars of disk space optimization running as systemd services inside WSL a
 
 2. **WSL Maintenance** -- Periodic memory reclamation (page cache drop + KSM), dev cache cleanup (pip, npm, uv, Playwright, Puppeteer), journal size cap (200M), and zsh history pruning with automatic backups.
 
-3. **VHDX Compaction** -- A TCP heartbeat watcher on Windows detects when WSL shuts down or crashes and immediately runs `fstrim` followed by VHDX compaction. No periodic scheduling -- purely event-driven.
+3. **VHDX Compaction** -- A TCP watcher on Windows detects when WSL shuts down or crashes and immediately compacts the VHDX. No polling, no periodic scheduling -- purely event-driven via a persistent TCP connection.
 
 4. **Shell Aliases** -- `dcdown` for safe Docker Compose teardown: removes locally-built images and orphan containers while preserving all volumes.
 
 ## How It Works
 
-The VHDX compaction pipeline uses a TCP heartbeat between WSL and Windows to detect shutdown events in real time:
+The VHDX compaction pipeline uses a persistent TCP connection between WSL and Windows to detect shutdown events in real time:
 
 ```
-Windows (Task Scheduler)                WSL (systemd)
-+------------------------------------+  +-----------------------------+
-| wsl-compact-watcher.ps1            |  | wsl-heartbeat-client.sh     |
-| TcpListener on 127.0.0.1:19999    |  | /dev/tcp/ connection        |
-|                                    |  |                             |
-| Sends PING every 5s ------------->-|--|--> Responds PONG            |
-|                                    |  |                             |
-| [Connection drops]                 |  | [WSL shuts down]            |
-|   30s grace period                 |  |   ExecStop: fstrim -v /     |
-|   Fallback fstrim -av              |  |                             |
-|   wsl --shutdown                   |  |                             |
-|   Triple-check gate:               |  |                             |
-|     - No running distros           |  |                             |
-|     - No vmmem process             |  |                             |
-|     - VHDX files not locked        |  |                             |
-|   compact-wsl.ps1                  |  |                             |
-|     Optimize-VHD or diskpart       |  |                             |
-+------------------------------------+  +-----------------------------+
+Windows (Task Scheduler, SYSTEM)         WSL (systemd)
++--------------------------------------+ +-------------------------------+
+| wsl-compact-watcher.ps1              | | wsl-heartbeat-client.sh       |
+| TcpListener on 127.0.0.1:19999      | | /dev/tcp/ connection + cat    |
+|                                      | |                               |
+| Socket.Poll detects FIN  <-----------|---  [WSL shuts down / crashes]  |
+|                                      | |   ExecStop: fstrim -v /       |
+| Safety gate:                         | +-------------------------------+
+|   - Wait for vmmem to exit           |
+|   - Verify VHDX files not locked     |
+|                                      |
+| Interactive compaction window         |
+|   (or headless if no user session)   |
+|   compact-wsl.ps1                    |
+|     Optimize-VHD or diskpart         |
++--------------------------------------+
 ```
 
-On graceful shutdown, the heartbeat service runs `fstrim` via its `ExecStop` directive before the connection drops. On crashes or ungraceful shutdowns, the Windows watcher runs `fstrim` as a fallback before compaction.
+**Graceful shutdown**: The heartbeat service runs `fstrim` via its `ExecStop` directive before the TCP connection drops. Windows detects the closed socket, waits for `vmmem` to fully exit, verifies no VHDX file locks remain, then compacts.
+
+**Crash / ungraceful shutdown**: The TCP connection breaks immediately. Windows detects the socket reset via `Socket.Poll`, runs the same safety checks, and compacts. The `fstrim` from `ExecStop` won't have run, but compaction still reclaims space from previously trimmed blocks.
+
+**No polling, no WSL commands**: The watcher never calls `wsl.exe` or `wsl --list --running` -- those commands restart WSL. Detection is purely via TCP socket state and the `vmmem` process.
+
+**Interactive window**: When a user is logged in, compaction runs in a visible PowerShell window (via a temporary scheduled task with `Interactive` logon type) so progress is visible. Falls back to headless when no interactive session is available.
 
 ## Prerequisites
 
@@ -49,12 +53,12 @@ On graceful shutdown, the heartbeat service runs `fstrim` via its `ExecStop` dir
 - **Docker Desktop or Docker Engine** (optional) -- only needed for Docker cleanup components
 - **bash** (required) -- the heartbeat client uses `/dev/tcp/` which is a bash built-in
 - **PowerShell 5.1+** on Windows -- for the watcher and compaction scripts
-- **Administrator privileges** on Windows -- required for Task Scheduler registration
+- **Administrator privileges** on Windows -- required for Task Scheduler registration and VHDX compaction
 
 ## Quick Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/477174/wsl-disk-space-optimization.git
 cd wsl-disk-space-optimization
 sudo ./install.sh
 ```
@@ -107,8 +111,8 @@ Available flags:
 | cache-cleanup | systemd timer | Sunday 03:30 | Cleans pip, npm, uv, Playwright, and Puppeteer caches |
 | wsl-mem-cleanup | systemd timer | Every 30 min | Drops page cache and triggers KSM memory deduplication |
 | zsh-history-cleanup | systemd timer | Sunday 02:00 | Removes zsh history entries older than 7 days, keeps last 5 backups |
-| wsl-heartbeat | systemd service | Always running | TCP heartbeat client to Windows watcher; runs `fstrim` on stop |
-| WSL-Disk-Optimizer | Windows scheduled task | At system startup | TCP watcher + VHDX compaction triggered by WSL shutdown detection |
+| wsl-heartbeat | systemd service | Always running | TCP connection to Windows watcher; runs `fstrim` on stop |
+| WSL-Disk-Optimizer | Windows scheduled task | At system startup | TCP watcher that triggers VHDX compaction on WSL shutdown |
 | journald drop-in | systemd config | Persistent | Caps journal storage at 200M (`SystemMaxUse=200M`) |
 | dcdown | shell function + alias | On demand | `docker compose down --rmi local --remove-orphans` with confirmation prompt |
 
@@ -153,7 +157,7 @@ Then remove the Windows scheduled task and scripts in an elevated PowerShell ses
 
 ```powershell
 Unregister-ScheduledTask -TaskName "WSL-Disk-Optimizer" -Confirm:$false
-Remove-Item -Recurse "$env:USERPROFILE\wsl-disk-optimizer"
+Remove-Item -Recurse "$env:ProgramData\wsl-disk-optimizer"
 ```
 
 ## How VHDX Compaction Works
@@ -166,7 +170,17 @@ The reclamation process has two steps:
 
 2. **VHDX compaction** -- Rewrites the VHDX file on the Windows host to remove the released blocks. Uses `Optimize-VHD` (Hyper-V module) when available, falling back to `diskpart` otherwise.
 
-This tool automates the full pipeline: detect WSL shutdown via TCP heartbeat loss, run `fstrim` (both inside the service ExecStop and as a Windows-side fallback), force a clean `wsl --shutdown`, verify shutdown with a triple-check gate, then compact all discovered VHDX files.
+This tool automates the full pipeline: detect WSL shutdown via TCP connection loss, run `fstrim` (via the heartbeat service's `ExecStop`), wait for the WSL VM to fully terminate (`vmmem` exit + VHDX unlock), then compact all discovered VHDX files.
+
+### VHDX Discovery
+
+The compaction script discovers VHDX files by scanning all user profiles under `C:\Users\*\AppData\Local\` for:
+
+- `wsl\{GUID}\ext4.vhdx` -- Modern WSL2 distributions
+- `Packages\*\LocalState\ext4.vhdx` -- Store-installed distributions
+- `Docker\wsl\data\ext4.vhdx` and `Docker\wsl\distro\ext4.vhdx` -- Docker Desktop
+
+Override with the `WSL_VHDX_PATH` environment variable (comma or semicolon separated) to specify paths explicitly.
 
 ## Limitations
 
