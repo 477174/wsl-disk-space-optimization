@@ -86,7 +86,7 @@ function Test-SafeToCompact {
     return $false
   }
 
-  $vhdxPaths = Get-VhdxPaths
+  $vhdxPaths = @(Get-VhdxPaths)
   if ($vhdxPaths.Count -eq 0) {
     Write-Log 'Safety check failed: no VHDX paths found.'
     return $false
