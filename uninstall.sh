@@ -173,7 +173,7 @@ fi
 echo ""
 printf "%b%s%b\n" "$COLOR_YELLOW" "To complete uninstall, run in elevated PowerShell:" "$COLOR_RESET"
 echo '  Unregister-ScheduledTask -TaskName "WSL-Disk-Optimizer" -Confirm:$false'
-echo '  Remove-Item -Recurse "$env:USERPROFILE\wsl-disk-optimizer"'
+echo '  Remove-Item -Recurse "$env:ProgramData\wsl-disk-optimizer"'
 echo ""
 
 # ── Summary ──────────────────────────────────────────────────────────

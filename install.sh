@@ -296,19 +296,18 @@ fi
 if [[ "$install_watcher" == true ]]; then
   systemctl enable --now wsl-heartbeat.service
 
-  WIN_USER="$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r' || true)"
-  if [[ -z "$WIN_USER" ]]; then
-    log_warn "Could not detect Windows user; watcher Windows setup skipped"
+  WIN_DIR="/mnt/c/ProgramData/wsl-disk-optimizer"
+  mkdir -p "$WIN_DIR"
+  cp -f "$SCRIPT_DIR"/windows/* "$WIN_DIR/"
+  WIN_PS_PATH="$(wslpath -w "$WIN_DIR/setup-watcher.ps1" 2>/dev/null || echo "$WIN_DIR/setup-watcher.ps1" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|; s|/|\\|g')"
+  /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS_PATH" 2>&1 || {
+    log_warn "Windows watcher task registration failed — run setup-watcher.ps1 from elevated PowerShell"
     watcher_status="partial"
-    watcher_detail="Linux watcher installed; Windows user detection failed"
-  else
-    WIN_DIR="/mnt/c/Users/$WIN_USER/wsl-disk-optimizer"
-    mkdir -p "$WIN_DIR"
-    cp -f "$SCRIPT_DIR"/windows/* "$WIN_DIR/"
-    WIN_PS_PATH="$(wslpath -w "$WIN_DIR/setup-watcher.ps1" 2>/dev/null || echo "$WIN_DIR/setup-watcher.ps1" | sed 's|^/mnt/\([a-z]\)/|\U\1:/|; s|/|\\|g')"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS_PATH"
+    watcher_detail="Linux watcher installed; Windows task registration failed (run setup-watcher.ps1 as admin)"
+  }
+  if [[ "$watcher_status" != "partial" ]]; then
     watcher_status="installed"
-    watcher_detail="heartbeat service + Windows scheduled task setup"
+    watcher_detail="heartbeat service + Windows scheduled task"
   fi
   log_ok "Watcher components processed"
 fi
