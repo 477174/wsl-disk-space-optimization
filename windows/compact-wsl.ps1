@@ -10,12 +10,12 @@ function Log($msg) {
   Add-Content -Path $LogFile -Value $entry
 }
 
-Log "=== WSL VHDX Compaction $(if ($DryRun) { '(DRY RUN)' }) ==="
+$runMode = if ($DryRun) { ' (DRY RUN)' } else { '' }
+Log "=== WSL VHDX Compaction$runMode ==="
 
-# Verify WSL is not running (vmmem absent = WSL VM is down)
 $vmmem = Get-Process -Name vmmem -ErrorAction SilentlyContinue
 if ($vmmem) {
-  Log "ERROR: vmmem is running — WSL is still active. Cannot compact while VHDX is in use."
+  Log "ERROR: vmmem is running. Cannot compact while VHDX is in use."
   exit 1
 }
 
@@ -52,14 +52,14 @@ if ($vhdxPaths.Count -eq 0) {
   exit 0
 }
 
-Log "Found $($vhdxPaths.Count) VHDX file(s):"
+Log ("Found {0} VHDX file(s):" -f $vhdxPaths.Count)
 foreach ($p in $vhdxPaths) { Log "  $p" }
 
 $hasOptimizeVHD = [bool](Get-Command Optimize-VHD -ErrorAction SilentlyContinue)
 
 foreach ($vhdx in $vhdxPaths) {
-  $sizeBefore = (Get-Item $vhdx).Length / 1GB
-  Log "Compacting: $vhdx (current size: $([math]::Round($sizeBefore, 2)) GB)"
+  $sizeBefore = [math]::Round((Get-Item $vhdx).Length / 1GB, 2)
+  Log ("Compacting: {0} - current size: {1} GB" -f $vhdx, $sizeBefore)
   if (-not $DryRun) {
     if ($hasOptimizeVHD) {
       Log "  Using Optimize-VHD"
@@ -72,11 +72,11 @@ foreach ($vhdx in $vhdxPaths) {
       Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
       $output | ForEach-Object { Log "  diskpart: $_" }
     }
-    $sizeAfter = (Get-Item $vhdx).Length / 1GB
-    $saved = $sizeBefore - $sizeAfter
-    Log "  Compacted: $([math]::Round($sizeBefore, 2)) GB -> $([math]::Round($sizeAfter, 2)) GB (saved $([math]::Round($saved, 2)) GB)"
+    $sizeAfter = [math]::Round((Get-Item $vhdx).Length / 1GB, 2)
+    $saved = [math]::Round($sizeBefore - $sizeAfter, 2)
+    Log ("  Result: {0} GB -> {1} GB, saved {2} GB" -f $sizeBefore, $sizeAfter, $saved)
   } else {
-    Log "  [DRY RUN] Would compact $vhdx ($([math]::Round($sizeBefore, 2)) GB)"
+    Log ("  [DRY RUN] Would compact {0} - {1} GB" -f $vhdx, $sizeBefore)
   }
 }
 Log "=== Compaction complete ==="
