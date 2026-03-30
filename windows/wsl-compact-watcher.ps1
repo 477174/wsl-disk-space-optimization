@@ -155,7 +155,27 @@ function Invoke-DisconnectSequence {
 
   Write-Log 'State=COMPACTING invoking compact-wsl.ps1'
   try {
-    & "$PSScriptRoot\compact-wsl.ps1" 2>&1 | ForEach-Object { Write-Log "  compact: $_" }
+    $compactScript = Join-Path $PSScriptRoot 'compact-wsl.ps1'
+    $taskName = 'WSL-Disk-Optimizer-Compact'
+    $loggedOnUser = (Get-CimInstance -ClassName Win32_ComputerSystem).UserName
+
+    if ($loggedOnUser) {
+      Write-Log "Launching interactive compaction as $loggedOnUser"
+      $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$compactScript`""
+      $taskPrincipal = New-ScheduledTaskPrincipal -UserId $loggedOnUser -LogonType Interactive -RunLevel Highest
+      Register-ScheduledTask -TaskName $taskName -Action $taskAction -Principal $taskPrincipal -Force | Out-Null
+      Start-ScheduledTask -TaskName $taskName
+
+      while ((Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State -eq 'Running') {
+        Start-Sleep -Seconds 2
+      }
+
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    } else {
+      Write-Log 'No interactive user session, running headless'
+      & $compactScript 2>&1 | ForEach-Object { Write-Log "  compact: $_" }
+    }
+
     Write-Log 'Compaction completed.'
   } catch {
     Write-Log "ERROR: compact-wsl.ps1 failed: $($_.Exception.Message)"

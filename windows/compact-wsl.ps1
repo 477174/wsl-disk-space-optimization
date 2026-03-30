@@ -1,5 +1,7 @@
 param([switch]$DryRun)
 
+$host.UI.RawUI.WindowTitle = 'WSL Disk Optimizer - Compacting VHDX'
+
 $LogFile = "$PSScriptRoot\logs\wsl-compact.log"
 New-Item -ItemType Directory -Path "$PSScriptRoot\logs" -Force | Out-Null
 
