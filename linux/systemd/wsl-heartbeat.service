@@ -1,0 +1,17 @@
+[Unit]
+Description=WSL Heartbeat — TCP connection to Windows VHDX compaction watcher
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=__INSTALL_DIR__/scripts/wsl-heartbeat-client.sh
+ExecStop=/usr/sbin/fstrim -v /
+TimeoutStopSec=120
+Restart=always
+RestartSec=5
+Environment=WSL_HEARTBEAT_PORT=19999
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
