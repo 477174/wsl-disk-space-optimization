@@ -110,46 +110,74 @@ function Test-SafeToCompact {
   return $true
 }
 
-function Wait-ForVmmemExit {
+function Wait-ForShutdown {
   param([int]$TimeoutSeconds = 120)
 
-  $elapsed = 0
-  while ($elapsed -lt $TimeoutSeconds) {
-    if (-not (Test-VmmemRunning)) {
-      return $true
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $vmmemDone = $false
+  $vhdxDone = $false
+
+  while ($sw.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+    if ($listener.Pending()) {
+      Write-Log 'WSL reconnected during shutdown wait, cancelling compaction.'
+      return 'reconnected'
     }
+
+    if (-not $vmmemDone) {
+      if (-not (Test-VmmemRunning)) {
+        Write-Log 'vmmem has exited.'
+        $vmmemDone = $true
+      }
+    }
+
+    if ($vmmemDone -and -not $vhdxDone) {
+      $vhdxPaths = @(Get-VhdxPaths)
+      if ($vhdxPaths.Count -eq 0) {
+        Write-Log 'No VHDX files found.'
+        return 'no-vhdx'
+      }
+      $allUnlocked = $true
+      foreach ($vhdx in $vhdxPaths) {
+        if (Test-VhdxLocked $vhdx) {
+          $allUnlocked = $false
+          break
+        }
+      }
+      if ($allUnlocked) {
+        Write-Log 'All VHDX files unlocked.'
+        $vhdxDone = $true
+      }
+    }
+
+    if ($vmmemDone -and $vhdxDone) {
+      return 'ready'
+    }
+
     Start-Sleep -Seconds 2
-    $elapsed += 2
   }
 
-  return $false
+  $pending = @()
+  if (-not $vmmemDone) { $pending += 'vmmem still running' }
+  if (-not $vhdxDone) { $pending += 'VHDX still locked' }
+  Write-Log "Timeout after ${TimeoutSeconds}s: $($pending -join ', ')"
+  return 'timeout'
 }
 
 function Invoke-DisconnectSequence {
   param([string]$DisconnectReason)
 
   Write-Log "State=DISCONNECTED reason=$DisconnectReason"
-  Write-Log "Entering ${GracePeriodSeconds}s grace period before compaction checks."
+  Write-Log 'Waiting for WSL to fully shut down (vmmem exit + VHDX unlock)...'
 
-  $elapsed = 0
-  while ($elapsed -lt $GracePeriodSeconds) {
-    Start-Sleep -Seconds 5
-    $elapsed += 5
+  $result = Wait-ForShutdown -TimeoutSeconds 120
 
-    if ($listener.Pending()) {
-      Write-Log 'Heartbeat client reconnected during grace period, cancelling compaction.'
-      return
-    }
-  }
-
-  Write-Log 'Grace period ended. Waiting for vmmem to exit...'
-  if (-not (Wait-ForVmmemExit -TimeoutSeconds 120)) {
-    Write-Log 'ERROR: vmmem still running after 120s. WSL is still alive. Skipping compaction.'
+  if ($result -ne 'ready') {
+    Write-Log "Shutdown wait result: $result. Skipping compaction."
     return
   }
 
   if (-not (Test-SafeToCompact)) {
-    Write-Log 'ERROR: Safety check failed. Skipping compaction.'
+    Write-Log 'ERROR: Final safety check failed. Skipping compaction.'
     return
   }
 
