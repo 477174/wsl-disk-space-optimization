@@ -36,8 +36,8 @@ function Set-TcpKeepAlive {
   $Socket.IOControl([System.Net.Sockets.IOControlCode]::KeepAliveValues, $keepAlive, $null) | Out-Null
 }
 
-function Test-VmmemRunning {
-  return [bool](Get-Process -Name vmmem -ErrorAction SilentlyContinue)
+function Test-WslVmRunning {
+  return [bool](Get-Process -Name vmmem,vmwp -ErrorAction SilentlyContinue)
 }
 
 function Get-VhdxPaths {
@@ -87,8 +87,8 @@ function Test-VhdxLocked($path) {
 }
 
 function Test-SafeToCompact {
-  if (Test-VmmemRunning) {
-    Write-Log 'Safety check failed: vmmem process is still running.'
+  if (Test-WslVmRunning) {
+    Write-Log 'Safety check failed: WSL VM processes still running.'
     return $false
   }
 
@@ -124,8 +124,8 @@ function Wait-ForShutdown {
     }
 
     if (-not $vmmemDone) {
-      if (-not (Test-VmmemRunning)) {
-        Write-Log 'vmmem has exited.'
+      if (-not (Test-WslVmRunning)) {
+        Write-Log 'WSL VM processes (vmmem/vmwp) have exited.'
         $vmmemDone = $true
       }
     }
@@ -157,7 +157,7 @@ function Wait-ForShutdown {
   }
 
   $pending = @()
-  if (-not $vmmemDone) { $pending += 'vmmem still running' }
+  if (-not $vmmemDone) { $pending += 'WSL VM still running (vmmem/vmwp)' }
   if (-not $vhdxDone) { $pending += 'VHDX still locked' }
   Write-Log "Timeout after ${TimeoutSeconds}s: $($pending -join ', ')"
   return 'timeout'

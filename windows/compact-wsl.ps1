@@ -15,9 +15,9 @@ function Log($msg) {
 $runMode = if ($DryRun) { ' (DRY RUN)' } else { '' }
 Log "=== WSL VHDX Compaction$runMode ==="
 
-$vmmem = Get-Process -Name vmmem -ErrorAction SilentlyContinue
-if ($vmmem) {
-  Log "ERROR: vmmem is running. Cannot compact while VHDX is in use."
+$wslVm = Get-Process -Name vmmem,vmwp -ErrorAction SilentlyContinue
+if ($wslVm) {
+  Log ("ERROR: WSL VM processes still running: {0}. Cannot compact while VHDX is in use." -f ($wslVm.Name -join ', '))
   exit 1
 }
 
